@@ -502,6 +502,7 @@ main{min-height:0;padding:32px;background-color:var(--well);background-image:lin
         <label>Crosshair hole Ø (mm)</label>
         <input type="number" id="bar-hole" min="0" step="0.1" placeholder="auto">
       </div>
+      <p class="tile-note">Colour: spot <b style="color:var(--tx)">REGISTRATION</b> (100% of all inks)</p>
     </div>
   </div>
 
@@ -1404,7 +1405,7 @@ async function exportPDF(){
 
     setProgress(100);
     setTimeout(()=>setProgress(0),800);
-    setStatus('✓ Exported at full source quality'+(lastBars.on?` · bearer bars ${lastBars.bw}mm added`:' · no bearer bars (switch is off in section 06)')+(_exportWarn?' — '+_exportWarn:''),_exportWarn?'busy':'ok');
+    setStatus('✓ Exported at full source quality'+(lastBars.on?` · bearer bars ${lastBars.bw}mm added in spot colour REGISTRATION`:' · no bearer bars (switch is off in section 06)')+(_exportWarn?' — '+_exportWarn:''),_exportWarn?'busy':'ok');
 
   }catch(e){
     setStatus('Export failed: '+e.message,'err');
@@ -1608,7 +1609,7 @@ function barLayout(p,layoutMmW){
   return (lastBars={on:true,bw:b.w,gap,minGap:layoutMmW,side:b.w+(gap-layoutMmW)/2,
     adj:b.adj,hole:b.hole,clamped:b.gap>0&&b.gap<layoutMmW-0.001});
 }
-function barTxt(){return lastBars.on?`  ·  bearer bars ${lastBars.bw}mm, gap ${lastBars.gap.toFixed(1)}mm`:''}
+function barTxt(){return lastBars.on?`  ·  bearer bars ${lastBars.bw}mm (REGISTRATION), gap ${lastBars.gap.toFixed(1)}mm`:''}
 // Geometry in mm, y measured from the TOP of the sheet. Bars are full height ± adj, centred vertically.
 function barGeom(bars,W,H){
   const w=bars.bw, len=Math.max(5,H+bars.adj), y=(H-len)/2;
@@ -1633,7 +1634,19 @@ function drawBarsPreview(ctx,bars,Wpx,Hpx){
 function drawBarsPdf(page,bars,sheetPtW,sheetPtH){
   if(!bars.on) return;
   const L=PDFLib,K=0.5522847498,M=PT_PER_MM,H=sheetPtH/M;
-  const ops=[L.pushGraphicsState(),L.setFillingColor(L.grayscale(0)),L.setStrokingColor(L.grayscale(0)),L.setLineWidth(0.25)];
+  // Named spot colour "REGISTRATION": Separation space, 100% tint, CMYK alternate = C+M+Y+K 100%
+  const ctx=page.doc.context, CS='CS_REGISTRATION', res=page.node.normalizedEntries().Resources;
+  let csd=res.lookup(L.PDFName.of('ColorSpace'));
+  if(!csd){csd=ctx.obj({});res.set(L.PDFName.of('ColorSpace'),csd)}
+  if(!csd.get(L.PDFName.of(CS))){
+    const fn=ctx.obj({FunctionType:2,Domain:[0,1],C0:[0,0,0,0],C1:[1,1,1,1],N:1});
+    csd.set(L.PDFName.of(CS),ctx.obj([L.PDFName.of('Separation'),L.PDFName.of('REGISTRATION'),L.PDFName.of('DeviceCMYK'),fn]));
+  }
+  const nm=L.PDFName.of(CS),one=L.PDFNumber.of(1);
+  const ops=[L.pushGraphicsState(),
+    L.PDFOperator.of('cs',[nm]),L.PDFOperator.of('scn',[one]),   // fill  = REGISTRATION 100%
+    L.PDFOperator.of('CS',[nm]),L.PDFOperator.of('SCN',[one]),   // stroke = REGISTRATION 100%
+    L.setLineWidth(0.25)];
   for(const g of barGeom(bars,sheetPtW/M,H)){
     const x=g.x*M,w=g.w*M,yb=(H-g.y-g.h)*M,yt=(H-g.y)*M,cx=g.cx*M,cy=(H-g.cy)*M,r=g.r*M;
     // bar clockwise, hole counter-clockwise => non-zero fill leaves the circle empty
