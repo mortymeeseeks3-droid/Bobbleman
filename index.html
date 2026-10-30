@@ -498,9 +498,15 @@ main{min-height:0;padding:32px;background-color:var(--well);background-image:lin
           <input type="number" id="bar-adj" step="0.5" value="0">
         </div>
       </div>
-      <div class="field">
-        <label>Crosshair hole Ø (mm)</label>
-        <input type="number" id="bar-hole" min="0" step="0.1" placeholder="auto">
+      <div class="row2">
+        <div class="field">
+          <label>Crosshair hole Ø (mm)</label>
+          <input type="number" id="bar-hole" min="0" step="0.1" placeholder="auto">
+        </div>
+        <div class="field">
+          <label>Top/bottom inset (mm)</label>
+          <input type="number" id="bar-inset" min="0" step="0.5" value="5">
+        </div>
       </div>
       <p class="tile-note">Colour: spot <b style="color:var(--tx)">REGISTRATION</b> (100% of all inks)</p>
     </div>
@@ -1600,21 +1606,26 @@ function readBars(){
   return {on, w:act?+act.dataset.bw:5,
     gap:parseFloat(document.getElementById('bar-gap').value)||0,
     adj:parseFloat(document.getElementById('bar-adj').value)||0,
-    hole:parseFloat(document.getElementById('bar-hole').value)||0};
+    hole:parseFloat(document.getElementById('bar-hole').value)||0,
+    inset:(v=>isNaN(v)?5:Math.max(0,v))(parseFloat(document.getElementById('bar-inset').value))};
 }
 function barLayout(p,layoutMmW){
   const b=p.bars;
   if(!b.on) return (lastBars={on:false,side:0,bw:0,gap:0,minGap:0,clamped:false});
   const gap=b.gap>0?Math.max(b.gap,layoutMmW):layoutMmW;
   return (lastBars={on:true,bw:b.w,gap,minGap:layoutMmW,side:b.w+(gap-layoutMmW)/2,
-    adj:b.adj,hole:b.hole,clamped:b.gap>0&&b.gap<layoutMmW-0.001});
+    adj:b.adj,hole:b.hole,inset:b.inset,clamped:b.gap>0&&b.gap<layoutMmW-0.001});
 }
 function barTxt(){return lastBars.on?`  ·  bearer bars ${lastBars.bw}mm (REGISTRATION), gap ${lastBars.gap.toFixed(1)}mm`:''}
 // Geometry in mm, y measured from the TOP of the sheet. Bars are full height ± adj, centred vertically.
+// Each bar has three crosshair holes: one at the middle, and one near each end, `inset` mm in from the page edge.
 function barGeom(bars,W,H){
   const w=bars.bw, len=Math.max(5,H+bars.adj), y=(H-len)/2;
   let d=bars.hole>0?bars.hole:w*0.6; d=Math.min(d,Math.max(0.2,w-0.2));
-  return [0,W-w].map(x=>({x,y,w,h:len,cx:x+w/2,cy:H/2,r:d/2}));
+  const top=Math.max(y,0), bot=Math.min(y+len,H), ins=Math.min(bars.inset,(bot-top)/2);
+  const ys=[H/2];
+  if(ins>=d/2+0.2){ys.unshift(top+ins);ys.push(bot-ins)}
+  return [0,W-w].map(x=>({x,y,w,h:len,cx:x+w/2,r:d/2,ys}));
 }
 function drawBarsPreview(ctx,bars,Wpx,Hpx){
   if(!bars.on) return;
@@ -1622,11 +1633,13 @@ function drawBarsPreview(ctx,bars,Wpx,Hpx){
   ctx.save(); ctx.fillStyle='#000'; ctx.strokeStyle='#000'; ctx.lineWidth=Math.max(0.6,0.09*k);
   for(const g of barGeom(bars,lastContent.w,lastContent.h)){
     ctx.beginPath(); ctx.rect(g.x*k,g.y*k,g.w*k,g.h*k);
-    ctx.moveTo((g.cx+g.r)*k,g.cy*k); ctx.arc(g.cx*k,g.cy*k,g.r*k,0,Math.PI*2,true);
-    ctx.fill('evenodd');                // circle is a true cutout
+    for(const cy of g.ys){ctx.moveTo((g.cx+g.r)*k,cy*k); ctx.arc(g.cx*k,cy*k,g.r*k,0,Math.PI*2,true)}
+    ctx.fill('evenodd');                // circles are true cutouts
     ctx.beginPath();
-    ctx.moveTo((g.cx-g.r)*k,g.cy*k); ctx.lineTo((g.cx+g.r)*k,g.cy*k);
-    ctx.moveTo(g.cx*k,(g.cy-g.r)*k); ctx.lineTo(g.cx*k,(g.cy+g.r)*k);
+    for(const cy of g.ys){
+      ctx.moveTo((g.cx-g.r)*k,cy*k); ctx.lineTo((g.cx+g.r)*k,cy*k);
+      ctx.moveTo(g.cx*k,(cy-g.r)*k); ctx.lineTo(g.cx*k,(cy+g.r)*k);
+    }
     ctx.stroke();
   }
   ctx.restore();
@@ -1648,16 +1661,23 @@ function drawBarsPdf(page,bars,sheetPtW,sheetPtH){
     L.PDFOperator.of('CS',[nm]),L.PDFOperator.of('SCN',[one]),   // stroke = REGISTRATION 100%
     L.setLineWidth(0.25)];
   for(const g of barGeom(bars,sheetPtW/M,H)){
-    const x=g.x*M,w=g.w*M,yb=(H-g.y-g.h)*M,yt=(H-g.y)*M,cx=g.cx*M,cy=(H-g.cy)*M,r=g.r*M;
-    // bar clockwise, hole counter-clockwise => non-zero fill leaves the circle empty
-    ops.push(L.moveTo(x,yb),L.lineTo(x,yt),L.lineTo(x+w,yt),L.lineTo(x+w,yb),L.closePath(),
-      L.moveTo(cx+r,cy),
-      L.appendBezierCurve(cx+r,cy+K*r,cx+K*r,cy+r,cx,cy+r),
-      L.appendBezierCurve(cx-K*r,cy+r,cx-r,cy+K*r,cx-r,cy),
-      L.appendBezierCurve(cx-r,cy-K*r,cx-K*r,cy-r,cx,cy-r),
-      L.appendBezierCurve(cx+K*r,cy-r,cx+r,cy-K*r,cx+r,cy),
-      L.closePath(),L.fill(),
-      L.moveTo(cx-r,cy),L.lineTo(cx+r,cy),L.moveTo(cx,cy-r),L.lineTo(cx,cy+r),L.stroke());
+    const x=g.x*M,w=g.w*M,yb=(H-g.y-g.h)*M,yt=(H-g.y)*M,cx=g.cx*M,r=g.r*M;
+    // bar clockwise, holes counter-clockwise => non-zero fill leaves the circles empty
+    ops.push(L.moveTo(x,yb),L.lineTo(x,yt),L.lineTo(x+w,yt),L.lineTo(x+w,yb),L.closePath());
+    for(const my of g.ys){
+      const cy=(H-my)*M;
+      ops.push(L.moveTo(cx+r,cy),
+        L.appendBezierCurve(cx+r,cy+K*r,cx+K*r,cy+r,cx,cy+r),
+        L.appendBezierCurve(cx-K*r,cy+r,cx-r,cy+K*r,cx-r,cy),
+        L.appendBezierCurve(cx-r,cy-K*r,cx-K*r,cy-r,cx,cy-r),
+        L.appendBezierCurve(cx+K*r,cy-r,cx+r,cy-K*r,cx+r,cy),L.closePath());
+    }
+    ops.push(L.fill());
+    for(const my of g.ys){
+      const cy=(H-my)*M;
+      ops.push(L.moveTo(cx-r,cy),L.lineTo(cx+r,cy),L.moveTo(cx,cy-r),L.lineTo(cx,cy+r));
+    }
+    ops.push(L.stroke());
   }
   ops.push(L.popGraphicsState());
   page.pushOperators(...ops);
